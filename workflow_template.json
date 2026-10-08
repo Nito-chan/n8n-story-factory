@@ -1,0 +1,258 @@
+{
+  "name": "Story Factory - Full Auto Pipeline",
+  "nodes": [
+    {
+      "id": "schedule-trigger-001",
+      "name": "Schedule (Daily 8AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "hoursInterval": 24
+            }
+          ],
+          "triggerAtHour": 8,
+          "triggerAtMinute": 0
+        }
+      }
+    },
+    {
+      "id": "reddit-fetch-002",
+      "name": "Reddit: Fetch Stories",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.reddit.com/r/ProRevenge/top.json?limit=10&t=week",
+        "options": {
+          "headers": {
+            "User-Agent": "StoryFactory/1.0 (by u/StoryBot)"
+          }
+        },
+        "sendBody": false,
+        "sendHeaders": false,
+        "sendQuery": false,
+        "authentication": "none",
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "pick-story-003",
+      "name": "Pick Random Story",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2.1,
+      "position": [560, 300],
+      "parameters": {
+        "jsCode": "// Collect all posts from Reddit response\nconst response = $input.first().json;\nconst posts = [];\n\nif (response.data && response.data.children) {\n  for (const child of response.data.children) {\n    if (child.kind === 't3' && child.data && child.data.selftext && child.data.selftext.length > 100) {\n      posts.push({\n        title: child.data.title,\n        selftext: child.data.selftext.substring(0, 5000),\n        url: 'https://reddit.com' + child.data.permalink,\n        subreddit: child.data.subreddit,\n        ups: child.data.ups,\n        author: child.data.author\n      });\n    }\n  }\n}\n\nif (posts.length === 0) {\n  throw new Error('No posts with text found - try a different subreddit or time filter');\n}\n\nconst picked = posts[Math.floor(Math.random() * posts.length)];\n\nreturn [{\n  json: {\n    story_title: picked.title,\n    story_text: picked.selftext,\n    story_url: picked.url,\n    story_subreddit: picked.subreddit,\n    story_ups: picked.ups,\n    story_author: picked.author\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "gemini-script-004",
+      "name": "Gemini: Generate Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{ $env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY' }}",
+        "sendBody": true,
+        "bodyParameters": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {},
+        "authentication": "none",
+        "responseFormat": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a professional scriptwriter for a faceless YouTube channel that tells revenge stories.\\n\\nGiven a Reddit story, create a YouTube video script in this JSON format:\\n{\\n  \\\"title\\\": \\\"Clickbaity video title (max 60 chars)\\\",\\n  \\\"description\\\": \\\"SEO description with story hook and call to subscribe (max 300 chars)\\\",\\n  \\\"tags\\\": [\\\"revenge\\\", \\\"storytime\\\", \\\"reddit\\\", \\\"karma\\\"],\\n  \\\"script\\\": \\\"Full narration script with scene markers [SCENE 1], [SCENE 2] etc.\\\",\\n  \\\"scenes\\\": [\\n    {\\n      \\\"id\\\": 1,\\n      \\\"text\\\": \\\"Narration text for this scene (50-80 words)\\\",\\n      \\\"image_prompt\\\": \\\"Detailed cinematic scene prompt...\\\"\\n    }\\n  ]\\n}\\n\\nCRITICAL RULES:\\n- Total script must be 1,200-1,500 words (8-10 minutes when read aloud at 150 wpm)\\n- Generate EXACTLY 10-12 scenes (each 100-150 words, ~40 seconds per scene)\\n- Image prompts must be cinematic, photorealistic, describe lighting, camera angle, mood, composition\\n- Start with a hook scene, end with a call to subscribe + moral reflection\\n- Keep the raw emotional tone of the original story but expand with details, background, emotional buildup\\n- Add ambient emotional texture: describe what the narrator felt, what the room looked like, sensory details\\n- Title must be clickable but not misleading\\n- Each scene text should be a complete narrative beat that can standalone visually\\n\\nStory title: {{ $json.story_title }}\\n\\nStory:\\n{{ $json.story_text }}\\\"\n    }]\\n  }],\\n  \\\"generationConfig\\\": {\\n    \\\"temperature\\\": 0.8,\\n    \\\"maxOutputTokens\\\": 8192\\n  }\\n}"
+      }
+    },
+    {
+      "id": "parse-generate-images-005",
+      "name": "Parse Script + Generate Images",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2.1,
+      "position": [1120, 300],
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nif (!response.candidates || !response.candidates[0]) {\n  throw new Error('Gemini did not return a valid response');\n}\n\nconst rawText = response.candidates[0].content.parts[0].text;\nconst cleaned = rawText.replace(/```json\\\\n?/g, '').replace(/```\\\\n?/g, '').trim();\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  // Try to extract JSON from response\n  const jsonMatch = cleaned.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try { parsed = JSON.parse(jsonMatch[0]); } catch (e2) { throw new Error('Failed to parse Gemini response as JSON: ' + rawText.substring(0, 200)); }\n  } else {\n    throw new Error('Failed to parse Gemini response as JSON: ' + rawText.substring(0, 200));\n  }\n}\n\nconst apiKey = $env.GEMINI_API_KEY;\nif (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY') {\n  throw new Error('Set GEMINI_API_KEY environment variable before running');\n}\n\nconst scenes = parsed.scenes || [];\nif (scenes.length === 0) {\n  throw new Error('No scenes generated');\n}\n\n// Generate images for each scene\nconst imagePaths = [];\nfor (const scene of scenes) {\n  try {\n    const imageResponse = await $http.post(\n      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key=' + apiKey,\n      {\n        contents: [{\n          parts: [{ text: scene.image_prompt }]\n        }],\n        generationConfig: {\n          responseModalities: ['Text', 'Image']\n        }\n      },\n      {\n        headers: { 'Content-Type': 'application/json' }\n      }\n    );\n\n    const parts = imageResponse.candidates[0].content.parts;\n    const imagePart = parts.find(p => p.inlineData);\n    \n    if (imagePart) {\n      const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');\n      const fileName = 'scene_' + scene.id + '.png';\n      require('fs').writeFileSync('assets/' + fileName, imageBuffer);\n      imagePaths.push({\n        scene_id: scene.id,\n        image_file: 'assets/' + fileName\n      });\n    }\n  } catch (err) {\n    // If image gen fails, skip and use placeholder\n    imagePaths.push({\n      scene_id: scene.id,\n      image_file: null,\n      error: err.message\n    });\n  }\n}\n\nreturn [{\n  json: {\n    video_title: parsed.title,\n    script: parsed.script,\n    description: parsed.description || '',\n    tags: parsed.tags || [],\n    scenes: scenes,\n    image_paths: imagePaths,\n    story_url: $input.first().json.story_url || '',\n    total_scenes: scenes.length\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "generate-audio-006",
+      "name": "Fish Audio: Generate Narration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fish.audio/v1/tts",
+        "sendBody": true,
+        "bodyParameters": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.FISH_AUDIO_KEY || 'YOUR_FISH_AUDIO_KEY' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        },
+        "authentication": "none",
+        "jsonBody": "={\n  \"text\": \"{{ $json.script }}\",\n  \"voice\": \"7f7e3c8b-8b3a-4b5c-8c3a-4b5c8c3a4b5c\",\n  \"format\": \"mp3\"\n}"
+      }
+    },
+    {
+      "id": "save-audio-007",
+      "name": "Save Audio to Disk",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2.1,
+      "position": [1680, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst item = $input.first();\n\n// Get the binary data from Fish Audio response\nconst binaryData = item.binary;\nif (!binaryData) {\n  throw new Error('No audio binary data received from Fish Audio');\n}\n\n// Get the first binary property\nconst binaryKey = Object.keys(binaryData)[0];\nconst audioBuffer = await binaryData[binaryKey].getData();\n\n// Save to disk\nconst audioPath = 'assets/narration.mp3';\nfs.writeFileSync(audioPath, audioBuffer);\n\nreturn [{\n  json: {\n    video_title: item.json.video_title,\n    script: item.json.script,\n    description: item.json.description,\n    tags: item.json.tags,\n    scenes: item.json.scenes,\n    image_paths: item.json.image_paths,\n    audio_file: audioPath,\n    total_scenes: item.json.total_scenes\n  }\n}];\n"
+      }
+    },
+{
+        "id": "assemble-video-008",
+        "name": "FFmpeg: Assemble Video",
+        "type": "n8n-nodes-base.executeCommand",
+        "typeVersion": 1.2,
+        "position": [1960, 300],
+        "parameters": {
+            "command": "=cd /d \"C:\\Users\\tanji\\Opencode\\n8n_setup\" && set PATH=C:\\Users\\tanji\\AppData\\Local\\CapCut\\Apps\\8.7.0.3706;%PATH% && powershell -ExecutionPolicy Bypass -File \"helpers\\assemble_video.ps1\" -AssetsDir \"assets\" -OutputFile \"output\\{{ $json.video_title.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50) }}.mp4\" -Title \"{{ $json.video_title }}\""
+        }
+    }
+    },
+    {
+      "id": "log-result-009",
+      "name": "Log to File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2.1,
+      "position": [2240, 300],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst item = $input.first().json;\n\nconst logEntry = {\n  title: item.video_title,\n  date: new Date().toISOString(),\n  scenes: item.total_scenes,\n  audio_file: item.audio_file,\n  image_paths: item.image_paths,\n  video_file: item.video_file || 'unknown'\n};\n\n// Append to log file\nconst logPath = 'output/production_log.json';\nlet log = [];\ntry {\n  if (fs.existsSync(logPath)) {\n    log = JSON.parse(fs.readFileSync(logPath, 'utf8'));\n  }\n} catch (e) { /* ignore parse errors */ }\n\nlog.push(logEntry);\nfs.writeFileSync(logPath, JSON.stringify(log, null, 2));\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Video produced: ' + item.video_title,\n    log_entry: logEntry\n  }\n}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule (Daily 8AM)": {
+      "main": [
+        [
+          {
+            "node": "Reddit: Fetch Stories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit: Fetch Stories": {
+      "main": [
+        [
+          {
+            "node": "Pick Random Story",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Random Story": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Generate Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Generate Script": {
+      "main": [
+        [
+          {
+            "node": "Parse Script + Generate Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Script + Generate Images": {
+      "main": [
+        [
+          {
+            "node": "Fish Audio: Generate Narration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fish Audio: Generate Narration": {
+      "main": [
+        [
+          {
+            "node": "Save Audio to Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Audio to Disk": {
+      "main": [
+        [
+          {
+            "node": "FFmpeg: Assemble Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FFmpeg: Assemble Video": {
+      "main": [
+        [
+          {
+            "node": "Log to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/New_York",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": []
+}
