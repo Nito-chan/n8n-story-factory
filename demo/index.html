@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Story Factory — AI video pipeline demo</title>
+<meta name="description" content="End-to-end AI short: Reddit story to script, AI scenes, TTS and stitched MP4. Built with Python, n8n and FFmpeg.">
+<style>
+*{box-sizing:border-box;margin:0}body{background:#0a0a0e;color:#efe9dc;font-family:system-ui,sans-serif;line-height:1.6;padding:2rem 1.25rem}
+.wrap{max-width:720px;margin:auto}h1{font-size:clamp(1.8rem,5vw,2.6rem);letter-spacing:-.02em}a{color:#ff5c1a}
+video{width:100%;max-height:70vh;border-radius:16px;border:1px solid #2b2b38;background:#000;margin:1.5rem 0}
+.mut{color:#b6ac9c}.row{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}.chip{border:1px solid #2b2b38;border-radius:999px;padding:.15rem .7rem;font-size:.8rem;color:#b6ac9c;font-family:monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p><a href="https://github.com/Nito-chan/n8n-story-factory">← Source code</a></p>
+<h1>Story Factory</h1>
+<p class="mut">Reddit story → script → 13 AI scenes → narration → stitched MP4. Fully automated via Python + n8n + FFmpeg.</p>
+<div class="row"><span class="chip">Python</span><span class="chip">n8n</span><span class="chip">Gemini</span><span class="chip">FFmpeg</span></div>
+<video controls preload="metadata" src="story-factory.mp4"></video>
+<p class="mut">Built by <a href="https://nito.dpdns.org/">Nitō</a> — AI automation for creators.</p>
+</div>
+</body>
+</html>
